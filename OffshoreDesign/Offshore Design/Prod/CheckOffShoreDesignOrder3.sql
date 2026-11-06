@@ -77,8 +77,22 @@ BEGIN
 
         IF @testData = 1
             UPDATE #offShoreSKUs SET vendor = '00000';
+        
+        -- Removes designs that have a PO cut already for that design.
+        DELETE a
+        FROM #offShoreSKUs a
+        WHERE EXISTS (
+            SELECT 1
+            FROM dbo.DESIGN_ORDER_DTL dtl
+            JOIN dbo.DESIGN_ORDERS do ON do.id = dtl.id
+            WHERE dtl.orderId = @id
+            AND do.design = a.id
+            AND do.orderType = @demandOrderType
+            AND do.po IS NOT NULL
+            AND do.[status] <> 99
+        );
 
-       
+
         BEGIN TRANSACTION;
         /*
             The following actions are taken in order:
