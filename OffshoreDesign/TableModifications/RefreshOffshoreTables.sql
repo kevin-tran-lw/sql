@@ -1,0 +1,82 @@
+/* 
+    Intended to only be used once before Offshore Feature goes live.
+*/
+
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+-- Orders
+DELETE FROM OFFSHORE_DESIGN_ORDER_DTL;
+DELETE FROM OFFSHORE_DESIGN_ORDER_HDR;
+
+-- Sample requests
+DELETE FROM OFFSHORE_DESIGN_SAMPLE_REQUEST;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_SAMPLE_REQUEST', RESEED, 0);
+
+-- Timelines
+DELETE FROM OFFSHORE_DESIGN_TIMELINE;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_TIMELINE', RESEED, 0);
+
+DELETE FROM OFFSHORE_DESIGN_STATUS_TIMELINE;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_STATUS_TIMELINE', RESEED, 0);
+
+-- Quotes
+DELETE FROM OFFSHORE_DESIGN_QUOTE_REQUEST;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_QUOTE_REQUEST', RESEED, 0);
+
+-- Pricing children first
+DELETE FROM OFFSHORE_DESIGN_PRICE;
+DELETE FROM OFFSHORE_DESIGN_PRICE_RESTRICTIONS;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_PRICE_RESTRICTIONS', RESEED, 0);
+
+-- Pricing parent last
+DELETE FROM OFFSHORE_DESIGN_PRICE_MAP;
+DBCC CHECKIDENT ('OFFSHORE_DESIGN_PRICE_MAP', RESEED, 0);
+
+-- Refreshes Dummy Table
+-- DELETE FROM DESIGN_ORDERS_DUMMY;
+
+-- SET IDENTITY_INSERT DESIGN_ORDERS_DUMMY ON;
+
+-- INSERT INTO DESIGN_ORDERS_DUMMY (
+--     id,
+--     design,
+--     createdOn,
+--     vendor,
+--     [status],
+--     quantity,
+--     po,
+--     dateOrderd,
+--     dateRequired,
+--     createBy
+-- )
+-- SELECT
+--     id,
+--     design,
+--     createdOn,
+--     vendor,
+--     [status],
+--     quantity,
+--     po,
+--     dateOrderd,
+--     dateRequired,
+--     createBy
+-- FROM DESIGN_ORDERS;
+
+-- SET IDENTITY_INSERT DESIGN_ORDERS_DUMMY OFF;
+
+    -- Leave ROLLBACK active while testing. Swap it with COMMIT when ready.
+    --ROLLBACK TRANSACTION;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0
+        ROLLBACK TRANSACTION;
+
+    -- IDENTITY_INSERT is session-scoped, so make sure it is reset after an error.
+    SET IDENTITY_INSERT DESIGN_ORDERS_DUMMY OFF;
+
+    THROW;
+END CATCH;
