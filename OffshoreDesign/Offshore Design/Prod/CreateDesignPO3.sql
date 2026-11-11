@@ -100,8 +100,22 @@ BEGIN
         END,
         tc.cost
     FROM @designPrices dp
-    JOIN dbo.ORDER_DESIGNS od
-        ON od.id = dp.designId 
+    -- One ORDER_DESIGNS row per design (same variation priority as the KZ53 insert) so a design
+    -- with several variations does not produce a duplicate charge line per variation.
+    CROSS APPLY (
+        SELECT TOP 1 o.method
+        FROM dbo.ORDER_DESIGNS o
+        WHERE o.id = dp.designId
+        ORDER BY
+            CASE
+                WHEN LTRIM(RTRIM(o.variation)) = '01'  THEN 0
+                WHEN LTRIM(RTRIM(o.variation)) = '001' THEN 1
+                WHEN TRY_CAST(o.variation AS INT) IS NOT NULL THEN 2
+                ELSE 3
+            END,
+            TRY_CAST(o.variation AS INT) DESC,
+            o.variation DESC
+    ) od
     -- Inner join on purpose: a method with no row for this vendor has no sample or mold charge
     -- (business rule), so the design gets no charge line.
     JOIN dbo.OFFSHORE_DESIGN_TREATMENT_CHARGES tc
@@ -127,6 +141,7 @@ BEGIN
     IF (SELECT COUNT(*) FROM @designPrices) + (SELECT COUNT(*) FROM @charges) > 999
         THROW 50011, 'A purchase order cannot contain more than 999 lines including sample and mold charges.', 1;
 
+    -- ------------------------------------------------------------------ PO10 ------------------------------------------------------------------ 
     INSERT INTO CRCDATA.DBO.PO10 (
         [PO_NUMB],
         [PO_NUMB_SPARE1],
@@ -170,7 +185,8 @@ BEGIN
         [RDATE_ORDERED],
         [RDATE_REQUIRED],
         [DEST_TYPE],
-        [MESSAGE_NUMB]
+        [MESSAGE_NUMB],
+        [FG_FLAG]
     )
     SELECT
         @poNumb,                                            -- [PO_NUMB]
@@ -224,11 +240,12 @@ BEGIN
         CRCDATA.DBO.return_rdat(GETDATE()),                 -- [RDATE_ORDERED]
         CRCDATA.DBO.return_rdat(@dateRequired),             -- [RDATE_REQUIRED]
         '0',                                                -- [DEST_TYPE]
-        ''                                                  -- [MESSAGE_NUMB]
+        '',                                                 -- [MESSAGE_NUMB]
+        'F'                                                 -- [FG_FLAG]
     FROM CRCDATA.DBO.VN10 vn10
     WHERE @vendor = vn10.VEND_NUMB
 
-
+    -- ------------------------------------------------------------------ PO11 ------------------------------------------------------------------ 
     -- Inserts the PO11 records for the offshore treatments
     INSERT INTO CRCDATA.DBO.PO11 (
         [PO_NUMB],
@@ -374,6 +391,207 @@ BEGIN
         c.cost,                                            -- [ORIG_PO_DLR]
         'EA'                                                -- [PRICE_UM]
     FROM @charges c;
+
+    -- ------------------------------------------------------------------ FG10 ------------------------------------------------------------------ 
+    INSERT INTO CRCDATA.dbo.FG10 (
+        ITEM_NUMB,
+        ITEM_DESC1,
+        ITEM_DESC2,
+        ORDER_UNIT_CODE,
+        UNIT_MEASURE,
+        MIN_QTY,
+        MAX_QTY,
+        LEAD_TIME,
+        WHSE,
+        BUYER_NUMB,
+        TYPE_CODE,
+        SUB_TYPE1_CODE,
+        SUB_TYPE2_CODE,
+        SUB_TYPE3_CODE,
+        KIND_CODE,
+        CCNTR_NUMB,
+        VEND_NUMB2,
+        CREATED_RDAT,
+        CHANGED_RDAT,
+        AVG_PRICE,
+        CURR_PRICE,
+        SELL_PRICE,
+        KIT,
+        COMM_PCT2,
+        UNIT_COST,
+        LOC
+    )
+    SELECT DISTINCT
+        dp.designId,                                        -- [ITEM_NUMB]
+        dp.designId,                                        -- [ITEM_DESC1]
+        '',                                                 -- [ITEM_DESC2]
+        'EA',                                               -- [ORDER_UNIT_CODE]
+        'EA',                                               -- [UNIT_MEASURE]
+        '0',                                                -- [MIN_QTY]
+        '0',                                                -- [MAX_QTY]
+        '60',                                               -- [LEAD_TIME]
+        '10',                                               -- [WHSE]
+        '07',                                               -- [BUYER_NUMB]
+        '',                                                 -- [TYPE_CODE]
+        '508',                                              -- [SUB_TYPE1_CODE]
+        '',                                                 -- [SUB_TYPE2_CODE]
+        '',                                                 -- [SUB_TYPE3_CODE]
+        '',                                                 -- [KIND_CODE]
+        '820.10',                                           -- [CCNTR_NUMB]
+        '',                                                 -- [VEND_NUMB2]
+        CRCDATA.dbo.return_rdat(SYSDATETIME()),             -- [CREATED_RDAT]
+        CRCDATA.dbo.return_rdat(SYSDATETIME()),             -- [CHANGED_RDAT]
+        '1.20',                                             -- [AVG_PRICE]
+        '1.20',                                             -- [CURR_PRICE]
+        '0.00',                                             -- [SELL_PRICE]
+        'N',                                                -- [KIT]
+        '1.20',                                             -- [COMM_PCT2]
+        '1.20',                                             -- [UNIT_COST]
+        'DECO'                                              -- [LOC]
+    FROM @designPrices dp
+    LEFT JOIN CRCDATA.dbo.FG10 fg
+        ON dp.designId = fg.ITEM_NUMB
+        AND fg.LOC = 'DECO'
+    WHERE dp.designId IS NOT NULL
+        AND fg.ITEM_NUMB IS NULL
+
+    -- -------------------------------------------------------------- InventoryQty -------------------------------------------------------------- 
+    INSERT INTO  CRCDATA.dbo.InventoryQty (
+        ItemNumber,
+        Module,
+        OnHandQuantity,
+        LastPhysicalQuantity,
+        DamagedQuantity,
+        UnPricedQuantity
+    )
+    SELECT DISTINCT
+        dp.designId,
+        'FG',
+        '0.0000',
+        '0.0000',
+        '0.0000',
+        '0.0000'
+    FROM @designPrices dp
+    LEFT JOIN  CRCDATA.dbo.InventoryQty iq
+        ON dp.designId = iq.ItemNumber
+    WHERE dp.designId IS NOT NULL
+        AND iq.ItemNumber IS NULL
+
+    -- ------------------------------------------------------------------ KZ52 ------------------------------------------------------------------ 
+    INSERT INTO CRCDATA.dbo.kz52 (
+        DESIGN_ID,
+        DESIGN_DESC
+    )
+    SELECT DISTINCT
+        LTRIM(RTRIM(dp.designId)),
+        LTRIM(RTRIM(dp.designId))
+    FROM @designPrices dp
+    LEFT JOIN CRCDATA.dbo.kz52 kz
+        ON LTRIM(RTRIM(dp.designId)) = LTRIM(RTRIM(kz.design_id))
+    WHERE dp.designId IS NOT NULL
+        AND kz.design_id IS NULL
+
+    -- ------------------------------------------------------------------ KZ53 ------------------------------------------------------------------ 
+    INSERT INTO CRCDATA.dbo.kz53 (
+        DESIGN_ID,
+        VARIATION_CODE,
+        VARIATION_DESC,
+        PROCESS_CODE,
+        IMAGE_LOC_CODE,
+        NUM_OF_COLORS,
+        ROYALTY_CODE,
+        ART_NUM,
+        FILE_NUM,
+        SAMPLE_NUM,
+        IMAGE_NUM,
+        ORIGIN_RDAT,
+        ART_LOC,
+        FILE_LOC,
+        SAMPLE_LOC,
+        IMAGE_LOC,
+        ARTIST_NAME,
+        DESIGN_HEIGHT,
+        DESIGN_WIDTH,
+        STITCH_COUNT,
+        HOOP_SIZE,
+        ART_CAT_CODE,
+        THEME_CODE,
+        IN10_ITEM_NUMB,
+        FIN_WIDTH,
+        FIN_WIDTH_FRAC,
+        FIN_LENGTH,
+        FIN_LENGTH_FRAC,
+        UNITS_SELECT,
+        NOTES,
+        ART_COMPLETE_FLAG,
+        LICENSE_APPR_FLAG,
+        GARMENT_COLOR,
+        GARMENT_TYPE,
+        IMPRESSIONS
+    )
+    SELECT DISTINCT
+        dp.designId,                                            -- [DESIGN_ID]
+        od.variation,                                           -- [VARIATION_CODE]
+        '' as variation_desc,                                   -- [VARIATION_DESC]
+        CASE
+            WHEN od.method IN ('EMBS', 'HDLC', 'HDLQ', 'HDLP', 'HDLS', 'HDLT', 'EMBD', 'CORK', 'EMBM', 'EMFS', 'HDLB', 'EMFL', 'HDLN') THEN '00002' -- Embroidery
+            WHEN od.method IN ('HDLW', 'LFXS', 'PWTS', 'RRAA', 'WZAA', 'PZAA', 'LEAA', 'LFXL', 'PWTM', 'PWTR', 'SILA', 'PWTL') THEN '00004' -- Heat Transfer
+            ELSE '00001'
+        END AS process_code,                                    -- [PROCESS_CODE] (default: Print)
+        '' as image_loc_code,                                   -- [IMAGE_LOC_CODE]
+        '',                                                     -- [NUM_OF_COLORS]
+        od.royaltyCode,                                          -- [ROYALTY_CODE]
+        '',                                                     -- [ART_NUM]
+        '',                                                     -- [FILE_NUM]
+        '',                                                     -- [SAMPLE_NUM]
+        isnull(kz2.image_num, ''),                              -- [IMAGE_NUM]
+        isnull(kz2.origin_rdat, ''),                            -- [ORIGIN_RDAT]
+        '',                                                     -- [ART_LOC]
+        isnull(kz2.file_loc, ''),                               -- [FILE_LOC]
+        '',                                                     -- [SAMPLE_LOC]
+        '',                                                     -- [IMAGE_LOC]
+        isnull(kz2.artist_name, ''),                            -- [ARTIST_NAME]
+        isnull(kz2.design_height, ''),                          -- [DESIGN_HEIGHT]
+        isnull(kz2.design_width, ''),                           -- [DESIGN_WIDTH]
+        isnull(kz2.stitch_count, ''),                           -- [STITCH_COUNT]
+        '',                                                     -- [HOOP_SIZE]
+        '',                                                     -- [ART_CAT_CODE]
+        isnull(kz2.theme_code, '0000'),                         -- [THEME_CODE]
+        '',                                                     -- [IN10_ITEM_NUMB]
+        '',                                                     -- [FIN_WIDTH]
+        '',                                                     -- [FIN_WIDTH_FRAC]
+        '',                                                     -- [FIN_LENGTH]
+        '',                                                     -- [FIN_LENGTH_FRAC]
+        '',                                                     -- [UNITS_SELECT]
+        '',                                                     -- [NOTES]
+        '',                                                     -- [ART_COMPLETE_FLAG]
+        '',                                                     -- [LICENSE_APPR_FLAG]
+        '',                                                     -- [GARMENT_COLOR]
+        '',                                                     -- [GARMENT_TYPE]
+        ''                                                      -- [IMPRESSIONS]
+    FROM @designPrices dp
+    CROSS APPLY (
+        SELECT TOP 1 o.variation, o.method, o.royaltyCode
+        FROM dbo.ORDER_DESIGNS o
+        WHERE o.id = dp.designId
+        ORDER BY
+            CASE
+                WHEN LTRIM(RTRIM(o.variation)) = '01'  THEN 0
+                WHEN LTRIM(RTRIM(o.variation)) = '001' THEN 1
+                WHEN TRY_CAST(o.variation AS INT) IS NOT NULL THEN 2
+                ELSE 3
+            END,
+            TRY_CAST(o.variation AS INT) DESC,
+            o.variation DESC
+    ) od
+    LEFT JOIN CRCDATA.dbo.kz53 kz1
+        ON dp.designId = kz1.DESIGN_ID
+        AND od.variation = kz1.VARIATION_CODE
+    LEFT JOIN CRCDATA.dbo.kz53 kz2
+        ON CRCDATA.dbo.fnDesignGetOtherId(dp.designId) = kz2.design_id
+        AND kz2.variation_code = '000'
+    WHERE kz1.DESIGN_ID IS NULL;
+
 
     COMMIT TRANSACTION;
     END TRY

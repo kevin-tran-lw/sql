@@ -259,6 +259,7 @@ BEGIN
             IF NOT EXISTS (
                 SELECT 1 FROM dbo.OFFSHORE_DESIGN_QUOTE_REQUEST qr WITH (UPDLOCK, SERIALIZABLE)
                 WHERE qr.designId = @designId AND qr.vendor = @vendor
+                    AND ISNULL(qr.[status], 0) <> 99 -- a cancelled quote does not block a new one
             )
             BEGIN
                 INSERT INTO dbo.OFFSHORE_DESIGN_QUOTE_REQUEST (vendor, designId, createdBy, designOrdersId)

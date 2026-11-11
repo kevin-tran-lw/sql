@@ -518,7 +518,10 @@ BEGIN
         );
 
         UPDATE sampleRequest
-        SET physical = 1
+        SET physical = CASE
+                WHEN selected.id = sampleRequest.id THEN 1
+                ELSE 0
+            END
         OUTPUT
             INSERTED.designId,
             INSERTED.vendor,
@@ -559,7 +562,7 @@ BEGIN
         ) latestStatus
         WHERE sampleRequest.cancelledAt IS NULL
             AND sampleRequest.approvedAt IS NULL
-            AND ISNULL(sampleRequest.physical, 0) = 0
+            --AND ISNULL(sampleRequest.physical, 0) = 0
             AND ISNULL(latestStatus.[status], '') <> 'CANCELLED'
             AND EXISTS (
                 SELECT 1
@@ -1132,6 +1135,7 @@ BEGIN
                 WITH (UPDLOCK, SERIALIZABLE)
             WHERE qr.designId = a.id
                 AND qr.vendor = designOrder.vendor
+                AND ISNULL(qr.[status], 0) <> 99 -- a cancelled quote does not block a new one
         )   
         AND (
             @testData = 1
